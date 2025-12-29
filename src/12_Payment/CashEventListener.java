@@ -34,4 +34,10 @@ public class CashEventListener {
     public void handle(CashMemberCreatedEvent event) {
         cashFacade.createWallet(event.getMember());
     }
+
+    @TransactionalEventListener(phase = AFTER_COMMIT)
+    @Transactional(propagation = REQUIRES_NEW)
+    public void handle(MarketOrderPaymentRequestedEvent event) {
+        cashFacade.handle(event);
+    }
 }
