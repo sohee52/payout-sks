@@ -347,3 +347,10 @@ Spring Batch는 각 DB에 맞는 스키마 파일을 제공해:
 ```
 
 운영에서 MySQL 쓴다면 `schema-mysql.sql`을 직접 실행하면 돼.
+
+---
+
+## 7. PayoutItem 모으기를 배치 잡으로 수행
+
+[0047](https://github.com/jhs512/p-14116-1/commit/0047)
+
