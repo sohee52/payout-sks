@@ -206,3 +206,144 @@ Util.reflection.setField(
 
 - **프로덕션 코드에서는 지양**해야 함 (캡슐화 위반)
 - 테스트나 DataInit 같은 개발/테스트 환경에서만 사용하는 게 좋음
+
+---
+
+## 6. SpringBatch 의존성 추가, 개발/테스트 환경에서는 h2용 배치 메타데이터 테이블 생성
+
+[0046](https://github.com/jhs512/p-14116-1/commit/0046#diff-dc0d7f925e3e82631ead9a14d8f484303f911f22a957976694e23f09a5351c1e)
+
+### [build.gradle](src_02\06_SpringBatch\build.gradle)
+```gradle
+  implementation 'org.springframework.boot:spring-boot-starter-batch'
+  testImplementation 'org.springframework.batch:spring-batch-test'
+```
+
+### [application.yml](src_02\06_SpringBatch\application.yml)
+
+```yaml
+spring:
+  batch:
+    initialize-schema: always
+```
+
+### Spring Batch란?
+
+대용량 데이터를 일괄 처리(Batch Processing)하기 위한 Spring 프레임워크
+
+#### API vs Batch
+```
+실시간 처리 (API)          vs          배치 처리 (Batch)
+─────────────────                    ─────────────────
+사용자 요청 → 즉시 응답                 정해진 시간에 대량 작업 실행
+주문하기, 로그인                        정산, 리포트 생성, 데이터 마이그레이션
+```
+#### Spring Batch 핵심 구조
+```
+┌─────────────────────────────────────────────────┐
+│                     Job                         │
+│  (하나의 배치 작업 단위)                           │
+│                                                 │
+│   ┌─────────┐   ┌─────────┐   ┌─────────┐       │
+│   │  Step1  │ → │  Step2  │ → │  Step3  │       │
+│   │ 데이터   │   │ 가공     │   │ 저장    │       │
+│   │ 읽기     │   │         │   │         │       │
+│   └─────────┘   └─────────┘   └─────────┘       │
+└─────────────────────────────────────────────────┘
+```
+
+#### 메타데이터 테이블이 필요한 이유
+```plain text
+Q: 어제 정산 Job이 50만 건 처리 중 서버가 죽었어. 오늘 다시 실행하면?
+
+Spring Batch 없이: 처음부터 다시 100만 건 처리 😱
+Spring Batch 사용: 메타데이터 확인 → 50만 건부터 이어서 처리 ✓
+```
+
+### [BatchConfig](src_02\06_SpringBatch\BatchConfig.java)
+
+이 코드는 **Spring Batch의 메타데이터 테이블을 초기화**하는 설정 클래스야.
+
+#### 핵심 구성요소
+
+**1. 클래스 레벨 어노테이션**
+
+```java
+@Configuration          // Spring 설정 클래스
+@EnableBatchProcessing  // Spring Batch 기능 활성화
+@EnableJdbcJobRepository // JDBC 기반 JobRepository 사용
+```
+
+**2. DataSourceInitializer 빈**
+
+```java
+@Bean
+@Profile("!prod")  // prod 프로파일이 아닐 때만 실행 (dev, test 등)
+public DataSourceInitializer notProdDataSourceInitializer(DataSource dataSource) {
+```
+
+- **개발/테스트 환경에서만** H2 스키마를 자동 생성
+- 운영 환경에서는 수동으로 스키마를 관리하겠다는 의도
+
+**3. 스키마 초기화 로직**
+
+```java
+// ResourceDatabasePopulator = SQL 스크립트 파일을 읽어서 데이터베이스에 실행해주는 Spring 유틸리티 클래스
+ResourceDatabasePopulator populator = new ResourceDatabasePopulator();
+
+// Spring Batch가 제공하는 H2용 스키마 SQL 파일
+// 실행할 SQL 스크립트 추가
+populator.addScript(new ClassPathResource("/org/springframework/batch/core/schema-h2.sql"));
+
+// 이미 테이블이 있어도 에러 무시하고 계속 진행
+populator.setContinueOnError(true);
+
+DataSourceInitializer initializer = new DataSourceInitializer();
+initializer.setDataSource(dataSource);
+initializer.setDatabasePopulator(populator); // 앱 시작 시 실행
+return initializer;
+```
+
+---
+
+#### Spring Batch 메타데이터 테이블이 뭐야?
+
+Spring Batch는 Job 실행 이력을 추적하기 위해 **6개의 테이블**이 필요해:
+
+| 테이블 | 용도 |
+|--------|------|
+| `BATCH_JOB_INSTANCE` | Job 인스턴스 정보 |
+| `BATCH_JOB_EXECUTION` | Job 실행 이력 |
+| `BATCH_JOB_EXECUTION_PARAMS` | 실행 파라미터 |
+| `BATCH_STEP_EXECUTION` | Step 실행 이력 |
+| `BATCH_STEP_EXECUTION_CONTEXT` | Step 컨텍스트 |
+| `BATCH_JOB_EXECUTION_CONTEXT` | Job 컨텍스트 |
+
+---
+
+#### 왜 이렇게 설정하나?
+
+```
+개발 환경 (H2 인메모리)
+├── 앱 시작할 때마다 DB 초기화됨
+├── 매번 스키마 자동 생성 필요
+└── @Profile("!prod")로 자동 실행
+
+운영 환경 (MySQL, PostgreSQL 등)
+├── 스키마가 이미 존재
+├── DBA가 수동으로 관리
+└── 자동 생성하면 위험 → 제외
+```
+
+#### 참고: DB별 스키마 파일
+
+Spring Batch는 각 DB에 맞는 스키마 파일을 제공해:
+
+```
+/org/springframework/batch/core/schema-h2.sql
+/org/springframework/batch/core/schema-mysql.sql
+/org/springframework/batch/core/schema-postgresql.sql
+/org/springframework/batch/core/schema-oracle.sql
+```
+
+운영에서 MySQL 쓴다면 `schema-mysql.sql`을 직접 실행하면 돼.
