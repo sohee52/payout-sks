@@ -54,3 +54,14 @@ OrderItem.toDto() → OrderItemDto 반환
 [Payout 도메인]
 List<OrderItemDto> 수신 완료
 ```
+
+## 4. 주문 품목 불러오기 후 PayoutCandidateItem 생성
+
+[0044](https://github.com/jhs512/p-14116-1/commit/0044)
+
+### PayoutAddPayoutCandidateItemsUseCase.java에서 makePayoutCandidateItems 메서드가 2번 있는 이유
+- 주문 상품 1개에서 “수수료 정산”과 “판매 대금 정산”이라는 서로 다른 두 개의 정산 이벤트가 발생하기 때문에 makePayoutCandidateItem을 두 번 호출하는 것이다.
+
+### MarketPolicy.java
+- calculateSalePriceWithoutFee : 판매자에게 실제로 지급되는 금액
+- calculatePayoutFee : 판매가 − 지급 금액 = 수수료
